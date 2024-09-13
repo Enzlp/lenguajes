@@ -1,2 +1,2 @@
-# lenguajes
+# Lenguajes
 Lenguajes de programación
