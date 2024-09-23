@@ -1,0 +1,8 @@
+#lang play
+(require "T2.rkt")
+
+(print-only-errors #t)
+
+
+;;Tests P1.d
+(test (p-subst (p-where (p-id 'x) 'y (tt)) 'x (ff)) (p-where (ff) 'y (tt)))
