@@ -33,8 +33,8 @@ En caso que afirmativo, indique con quién y sobre qué ejercicio:
          | (p-or <prop> <prop> ...)
          | (p-where <prop> <sym> <prop>)
 |#
-;; Prop representa una proposición lógica o booleana, que puede componerse por un booleano simple o por una expresion compuesta de
-;; varios operadores booleanos o definiciones locales.
+;; La estructura Prop representa proposiciones lógicas o booleanas, que pueden ser simples (como true o false), símbolos (p-id), 
+;; o combinaciones usando operadores como negación, and, or y definiciones locales.
 
 (deftype Prop
   (tt)
@@ -64,8 +64,8 @@ Concrete syntax of propositions:
 |#
 
 ;; parse-prop : <s-prop> -> Prop
-;; Parser para las proposiciones, toma el input en formato "normal" para el usuario y lo transforma en un formato que lo pueda leer nuestra estructura
-;; de dato prop
+;; parse-prop convierte expresiones legibles o "naturales" a la estructura Prop, para poder ser luego interpretado. Usa match 
+;; para manejar los distintos casos, y posee excepciones para entradas inválidas.
 (define (parse-prop s-expr)
   (match s-expr
     ['true (tt)]
@@ -74,11 +74,11 @@ Concrete syntax of propositions:
     [(list 'not prop) (p-not (parse-prop prop))]
     [(list 'and x elems ...) 
      (if (or (null? elems) (null? x))
-         (error 'and "expects at least two operands")
+         (error "parse-prop: and expects at least two operands")
          (p-and (cons (parse-prop x) (map parse-prop elems))))]
     [(list 'or x elems ...)
      (if (or (null? elems) (null? x))
-         (error 'or "expects at least two operands")
+         (error "parse-prop: or expects at least two operands")
          (p-or (cons (parse-prop x) (map parse-prop elems))))]
     [(list p 'where (list id expr))
      (p-where (parse-prop p) id (parse-prop expr))]))
@@ -93,13 +93,18 @@ Concrete syntax of propositions:
 <value> ::= (ttV)
         | (ffV)
 |#
-
+;; PValue representa valores booleanos como estructura.
 (deftype PValue
   (ttV)
   (ffV))
 
+
 ;; from-Pvalue : PValue -> Prop
-(define (from-Pvalue p-value) '???)
+;; from-Pvalue convierte un PValue en su representación Prop.
+(define (from-Pvalue p-value)
+  (match p-value
+    [(ttV) (tt)]
+    [(ffV) (ff)]))
 
 
 ;;----- ;;
@@ -108,19 +113,18 @@ Concrete syntax of propositions:
 
 
 ;; p-subst : Prop Symbol Prop -> Prop
-;; Sustituye un identificador en una proposición por un nuevo valor. Acepta la proposición, el identificador y el nuevo valor, y realiza la
-;; sustitución si hay coincidencias. Si no encuentra coincidencias, devuelve la proposición original.
+;; p-subst sustituye un identificador en una proposición por un nuevo valor. Acepta la proposición, el identificador y el nuevo valor. Realiza la 
+;; sustitución si hay coincidencias; de lo contrario, devuelve la proposición original.
 (define (p-subst target name substitution)
   (match target
     [(p-id x)
      (if (symbol=? x name)
          substitution
          (p-id x))]
-    [(p-where cond id body)
-     (p-where 
-      (p-subst cond name substitution) 
-      id
-      body)]  
+    [(p-where body id val)
+     (if (symbol=? id name)
+         target
+         (p-where (p-subst body name substitution) id (p-subst val name substitution)))]  
     [_ target]))
 
 
@@ -130,13 +134,43 @@ Concrete syntax of propositions:
 
 
 ;; eval-or : (Listof Prop) -> PValue
-(define (eval-or ps) '???)
+;; Funcion auxiliar eval-or, determina si hay una proposicion dentro de la lista que reduzca a true en cuyo caso debe reducir la expresion completa a true,
+;; es decir un cortocircuito
+(define (eval-or ps)
+  (match ps
+    ['() (ffV)]
+    [(list first elems ...)
+     (match first
+       [(tt) (ttV)]
+       [else (eval-or elems)])]))
 
 ;; eval-and : (Listof Prop) -> PValue
-(define (eval-and ps) '???)
+;; Funcion auxiliar eval-or, determina si hay una proposicion dentro de la lista que reduzca a false en cuyo caso debe reducir la expresion completa a false,
+;; es decir un cortocircuito
+(define (eval-and ps)
+  (match ps
+    ['() (ttV)]
+    [(list first elems ...)
+     (match first
+       [(ff) (ffV)]
+       [else (eval-and elems)])]))
 
 ;; p-eval : Prop -> PValue
-(define (p-eval p) '???)
+;; Evalua una proposicion y retorna se Pvalue reducido
+(define (p-eval p)
+  (match p
+    [(tt) (ttV)]
+    [(ff) (ffV)]
+    [(p-id x) (error "p-eval: Open expression (free occurrence of ~a)" x)]
+    [(p-not prop)
+     (match (p-eval prop)
+       [(ttV) (ffV)]
+       [(ffV) (ttV)])]
+    [(p-and ps) (eval-and ps)]  
+    [(p-or ps) (eval-or ps)]
+    [(p-where body id val)
+     (p-eval (p-subst body id val))]))  
+
 
 ;;------------ ;;
 ;;==== P2 ==== ;;
@@ -162,7 +196,7 @@ Concrete syntax of propositions:
   (add l r)
   (sub l r)
   (if0 c t f)
-  (with x named-expr body)
+  (with defs body)
   (id x))
 
 ;;----- ;;
@@ -191,37 +225,103 @@ Concrete syntax of expressions:
     [(list '+ l-sexpr r-sexpr) (add (parse l-sexpr)(parse r-sexpr))]
     [(list '- l-sexpr r-sexpr)(sub (parse l-sexpr)(parse r-sexpr))]
     [(list 'if0 c-sexpr t-sexpr f-sexpr)
-     (if0 (parse c-sexpr) (parse t-sexpr) (parse f-sexpr))]))
+     (if0 (parse c-sexpr) (parse t-sexpr) (parse f-sexpr))]
+    [(list 'with defs body)
+     (if (null? defs)
+         (error "parse: 'with' expects at least one definition")
+         (with (map (lambda (x)
+                      (match x
+                        [(list name val) (cons name (parse val))]))
+                    defs)
+               (parse body)))]))
+
 
 ;;----- ;;
 ;; P2.c ;;
 ;;----- ;;
 
-;; subst :: Expr Symbol Expr -> Expr
-(define (subst in what for) '???)
+#|
+<cvalue> ::= (compV <num> <num>)
+|#
+;; Representa los valores complejos compuestos por una parte real y una parte compleja
+(deftype CValue (compV r i))
+
+;; from-CValue :: CValue -> Expr
+;; Convierte un elemento Cvalue en una Expr
+(define (from-CValue v)
+  (match v
+    [(compV r i)  
+     (if (= i 0)
+         (real r)                 
+         (if (= r 0)
+             (imaginary i)            
+             (add (real r) (imaginary i))))]))  
+
+
+;; cmplx+ :: CValue CValue -> CValue
+;; cmplx+ toma de argumento dos complejos de tipo CValue y los suma retornando el Cvalue resultante
+(define (cmplx+ v1 v2)
+  (match v1
+    [(compV r1 i1)
+     (match v2
+       [(compV r2 i2)
+        (compV (+ r1 r2) (+ i1 i2))])]))
+
+;; cmplx- :: CValue CValue -> CValue
+;; cmplx- toma de argumento dos complejos de tipo CValue y los resta retornando el Cvalue resultante
+(define (cmplx- v1 v2)
+  (match (list v1 v2)
+    [(list (compV r1 i1) (compV r2 i2))
+     (compV (- r1 r2) (- i1 i2))]))
+
+;; cmplx0? :: CValue -> Boolean
+;; cmplx0 verifica si el numero es real o complejo, es decir retorna true si tiene un numero imaginario 0
+(define (cmplx0? v)
+  (match v
+  [(compV r i)
+   (if (= i 0)
+       #t
+       #f)]))
 
 ;;----- ;;
 ;; P2.d ;;
 ;;----- ;;
 
-#|
-<cvalue> ::= (compV <num> <num>)
-|#
+;; subst :: Expr Symbol Expr -> Expr
+;; subst substituye todas las ocurrencias libres del identificador escogido en al expresion que llamaremos in, por la expresion
+;; encerrada en for
+(define (subst in what for)
+  (match in
+    [(real r) (real r)]
+    [(imaginary i) (imaginary i)]
+    [(add l r) (add (subst l what for) (subst r what for))]
+    [(sub l r) (sub (subst l what for) (subst r what for))]
+    [(if0 c t f) (if0 (subst c what for)
+                      (subst t what for)
+                      (subst f what for))]
+    [(id x)
+     (if (symbol=? x what)
+         for
+         (id x))]
+    [(with defs expr)
+     (if (def-sub defs what)
+         (with )
+         in)]))
 
-(deftype CValue (compV r i))
 
-;; from-CValue :: CValue -> Expr
-(define (from-CValue v) '???)
-
-;; cmplx+ :: CValue CValue -> CValue
-(define (cmplx+ v1 v2) '???)
-
-;; cmplx- :: CValue CValue -> CValue
-(define (cmplx- v1 v2) '???)
-
-;; cmplx0? :: CValue -> Boolean
-(define (cmplx0? v) '???)
-
+;; Funcion auxiliar
+(define (shadow defs what)
+  (match defs
+    ['() #t]
+    [(list first elems ...)
+     (match first
+       [(x v) (if (equals? x what)
+                  #f
+                  (def-sub elems what))])]))
+;; Funcion auxiliar
+(define (defs-sub defs what)
+  (match defs
+    []))
 
 ;;----- ;;
 ;; P2.e ;;
