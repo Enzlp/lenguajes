@@ -52,7 +52,6 @@ En caso que afirmativo, indique con quién y sobre qué ejercicio:
 
 #|
 Concrete syntax of propositions:
-
 <s-prop> ::= true
           | false
           | <sym>
@@ -62,6 +61,8 @@ Concrete syntax of propositions:
           | (list <s-prop> 'where (<sym> <s-prop>))
 
 |#
+;; Syntaxis concreto de proposiciones, es el formato en el que se leera
+;; las operaciones pedidas
 
 ;; parse-prop : <s-prop> -> Prop
 ;; parse-prop convierte expresiones legibles o "naturales" a la estructura Prop, para poder ser luego interpretado. Usa match 
@@ -93,14 +94,14 @@ Concrete syntax of propositions:
 <value> ::= (ttV)
         | (ffV)
 |#
-;; PValue representa valores booleanos como estructura.
+;; PValue representa valores booleanos de true o false como estructura de datos.
 (deftype PValue
   (ttV)
   (ffV))
 
 
 ;; from-Pvalue : PValue -> Prop
-;; from-Pvalue convierte un PValue en su representación Prop.
+;; from-Pvalue convierte un valor PValue en su representación Prop o en proposición.
 (define (from-Pvalue p-value)
   (match p-value
     [(ttV) (tt)]
@@ -114,13 +115,23 @@ Concrete syntax of propositions:
 
 ;; p-subst : Prop Symbol Prop -> Prop
 ;; p-subst sustituye un identificador en una proposición por un nuevo valor. Acepta la proposición, el identificador y el nuevo valor. Realiza la 
-;; sustitución si hay coincidencias; de lo contrario, devuelve la proposición original.
+;; sustitución si hay coincidencias, de lo contrario, devuelve la proposición original.
 (define (p-subst target name substitution)
   (match target
     [(p-id x)
      (if (symbol=? x name)
          substitution
          (p-id x))]
+    [(p-not p)
+     (p-not (p-subst p name substitution))]
+    [(p-and p)
+     (p-and (cons (p-subst (first p) name substitution) 
+           (map (lambda (elem) (p-subst elem name substitution)) 
+                (rest p))))]
+    [(p-or p)
+     (p-or (cons (p-subst (first p) name substitution) 
+                 (map (lambda (elem) (p-subst elem name substitution)) 
+                      (rest p))))]
     [(p-where body id val)
      (if (symbol=? id name)
          target
@@ -156,7 +167,8 @@ Concrete syntax of propositions:
        [else (eval-and elems)])]))
 
 ;; p-eval : Prop -> PValue
-;; Evalua una proposicion y retorna se Pvalue reducido
+;; Interprete, toma una proposicion en formato Prop, ya pasada por Parse y evalua,
+;; retornando el Pvalue una vez reducido
 (define (p-eval p)
   (match p
     [(tt) (ttV)]
@@ -190,6 +202,9 @@ Concrete syntax of propositions:
         | (with <sym> <expr> <expr>)
         |(id <sym>)
 |#
+;; Estructura de datos, representa una expresión, compuesta de valores reales
+;; imaginarios, o combinaciones usando las operaciones de add, sub, not, definiciones
+;; locales usando with y variables representadas con id
 (deftype Expr
   (real a)
   (imaginary b)
@@ -205,7 +220,6 @@ Concrete syntax of propositions:
 
 #|
 Concrete syntax of expressions:
-
 <s-expr> ::= <num>
         | (<num> 'i)
         | (+ <s-expr> <s-expr>)
@@ -214,9 +228,12 @@ Concrete syntax of expressions:
         | (list 'with [(list <sym> <s-expr>)*] <s-expr>)
         | <sym>
 |#
+;; Syntaxis concreto de Expr, define como van a ser ingresado en nuestro lenguaje
+;; las peticiones
 
 ;; parse : <s-expr> -> Expr
-;; Parser, se encarga de tomar la expresion en "lenguaje natural" y transformarlo en formato de la estructura de datos Expr definida arriba
+;; Parser, se encarga de tomar la expresion en "lenguaje natural" o syntaxis concreto y
+;; transformarlo en formato de la estructura de datos Expr definida arriba para ser leida por el interprete
 (define (parse s-expr)
   (match s-expr
     [(? number? a) (real a)]
@@ -243,7 +260,7 @@ Concrete syntax of expressions:
 #|
 <cvalue> ::= (compV <num> <num>)
 |#
-;; Representa los valores complejos compuestos por una parte real y una parte compleja
+;; cvalue, estructura de datos que representa los valores complejos compuestos por una parte real y una parte compleja
 (deftype CValue (compV r i))
 
 ;; from-CValue :: CValue -> Expr
@@ -259,7 +276,7 @@ Concrete syntax of expressions:
 
 
 ;; cmplx+ :: CValue CValue -> CValue
-;; cmplx+ toma de argumento dos complejos de tipo CValue y los suma retornando el Cvalue resultante
+;; cmplx+ toma de argumento dos numeros complejos de tipo CValue y los suma retornando el Cvalue resultante
 (define (cmplx+ v1 v2)
   (match v1
     [(compV r1 i1)
@@ -287,6 +304,33 @@ Concrete syntax of expressions:
 ;; P2.d ;;
 ;;----- ;;
 
+;; Funcion auxiliar
+;; shadow :: ListOf (Symbol Prop) Symbol -> Boolean
+;; shadow determina si hay variables que han sido "obscurecidas" por otras,
+;; si es así entoces retorna falso, sino retorna verdadero
+(define (shadow defs what)
+  (match defs
+    ['() #t] 
+    [(list (cons x v) elems ...) 
+     (if (symbol=? x what) 
+         #f 
+         (shadow elems what))])) 
+
+;; Funcion auxiliar
+;; defs-sub :: ListOf(Symbol Prop) Symbol Prop -> ListOf (Pair Symbol Prop)
+;; defs-sub toma una lista de pares de variables y valores, y substituye el valor for del
+;; simbolo what, en el valor que se use como indentificador libre. 
+(define (defs-sub defs what for)
+  (match defs
+    ['() '()] 
+    [(list (cons var val) rest ...)
+     (if (and (symbol? val) (symbol=? val what))
+         (if (null? rest)
+             (list (cons var for))
+             (cons (cons var for) (defs-sub rest what for)))
+         (cons (cons var (subst val what for)) (defs-sub rest what for)))]
+    ))
+
 ;; subst :: Expr Symbol Expr -> Expr
 ;; subst substituye todas las ocurrencias libres del identificador escogido en al expresion que llamaremos in, por la expresion
 ;; encerrada en for
@@ -304,28 +348,38 @@ Concrete syntax of expressions:
          for
          (id x))]
     [(with defs expr)
-     (if (def-sub defs what)
-         (with )
+     (if (shadow defs what)
+         (with (defs-sub defs what for)(subst expr what for))
          in)]))
-
-
-;; Funcion auxiliar
-(define (shadow defs what)
-  (match defs
-    ['() #t]
-    [(list first elems ...)
-     (match first
-       [(x v) (if (equals? x what)
-                  #f
-                  (def-sub elems what))])]))
-;; Funcion auxiliar
-(define (defs-sub defs what)
-  (match defs
-    []))
 
 ;;----- ;;
 ;; P2.e ;;
 ;;----- ;;
 
+;; Funcion auxiliar
+;; interp-defs :: ListOf(Symbol Prop) Expr -> Result
+;; La funcion interp-defs toma una lista de pares varuables y valores, y substituye
+;; estos valores en la Expr body, una vez substituidos todos retorna el resultado de
+;; body interpretado llamando a la funcion interp
+(define (interp-defs defs body)
+  (match defs
+    ['() (interp body)]  
+    [(list (cons var val) elems ...)
+     (interp-defs elems (subst body var val))]))  
+
 ;; interp : Expr -> CValue
-(define (interp expr) '???)
+;; interp es un interprete, se ocupa de evaluar la expresion dada por el parser
+;; en formato Expr reduciendola a un valor del tipo compV
+(define (interp expr)
+  (match expr
+    [(real r) (compV r 0)]
+    [(imaginary i) (compV 0 i)]
+    [(add l r) (cmplx+ (interp l) (interp r))]
+    [(sub l r) (cmplx- (interp l) (interp r))]
+    [(if0 c-expr t-expr f-expr)
+     (if (cmplx0? (interp c-expr))
+         (interp t-expr)
+         (interp f-expr))]
+    [(with defs body)
+      (interp-defs defs body)] 
+    [(id x) (error 'interp "Open expression (free occurrence of ~a)" x)]))
