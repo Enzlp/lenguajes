@@ -1,9 +1,5 @@
 #lang play
 
-#| 
-NOMBRE Y APELLIDO: ENZO LOPEZ
-RUT: 20445626-7
-|#
 
 #|
 
