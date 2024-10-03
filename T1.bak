@@ -1,6 +1,11 @@
 #lang play
 (require math/flonum)
 
+#|
+Complete sus datos personales: 
+NOMBRE Y APELLIDO: ENZO LOPEZ
+RUT: 20445626-7
+|#
 
 ;; Parte a)
 #|Gramática BNF
